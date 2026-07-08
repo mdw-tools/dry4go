@@ -322,7 +322,7 @@ func normalizeNode(n ast.Node) node {
 	case nil:
 		return node{Tag: "nil"}
 	case *ast.BlockStmt:
-		return normalizeList("block", stmtNodes(x.List))
+		return normalizeList("block", normalizedNodes(x.List))
 	case *ast.IfStmt:
 		return node{Tag: "if", Children: []node{normalizeNode(x.Init), normalizeNode(x.Cond), normalizeNode(x.Body), normalizeNode(x.Else)}}
 	case *ast.ForStmt:
@@ -336,17 +336,17 @@ func normalizeNode(n ast.Node) node {
 	case *ast.SelectStmt:
 		return node{Tag: "select", Children: []node{normalizeNode(x.Body)}}
 	case *ast.CaseClause:
-		return node{Tag: "case", Children: []node{normalizeList("case-list", exprNodes(x.List)), normalizeList("case-body", stmtNodes(x.Body))}}
+		return node{Tag: "case", Children: []node{normalizeList("case-list", normalizedNodes(x.List)), normalizeList("case-body", normalizedNodes(x.Body))}}
 	case *ast.CommClause:
-		return node{Tag: "comm", Children: []node{normalizeNode(x.Comm), normalizeList("comm-body", stmtNodes(x.Body))}}
+		return node{Tag: "comm", Children: []node{normalizeNode(x.Comm), normalizeList("comm-body", normalizedNodes(x.Body))}}
 	case *ast.AssignStmt:
-		return node{Tag: "assign/" + x.Tok.String(), Children: []node{normalizeList("lhs", exprNodes(x.Lhs)), normalizeList("rhs", exprNodes(x.Rhs))}}
+		return node{Tag: "assign/" + x.Tok.String(), Children: []node{normalizeList("lhs", normalizedNodes(x.Lhs)), normalizeList("rhs", normalizedNodes(x.Rhs))}}
 	case *ast.DeclStmt:
 		return node{Tag: "decl", Children: []node{normalizeDecl(x.Decl)}}
 	case *ast.ExprStmt:
 		return node{Tag: "expr-stmt", Children: []node{normalizeNode(x.X)}}
 	case *ast.ReturnStmt:
-		return normalizeList("return", exprNodes(x.Results))
+		return normalizeList("return", normalizedNodes(x.Results))
 	case *ast.BranchStmt:
 		return node{Tag: "branch/" + x.Tok.String()}
 	case *ast.GoStmt:
@@ -368,13 +368,13 @@ func normalizeNode(n ast.Node) node {
 	case *ast.UnaryExpr:
 		return node{Tag: "unary/" + x.Op.String(), Children: []node{normalizeNode(x.X)}}
 	case *ast.CallExpr:
-		return node{Tag: "call", Children: append([]node{normalizeCallee(x.Fun)}, exprNodes(x.Args)...)}
+		return node{Tag: "call", Children: append([]node{normalizeCallee(x.Fun)}, normalizedNodes(x.Args)...)}
 	case *ast.SelectorExpr:
 		return node{Tag: "selector", Children: []node{normalizeNode(x.X), {Tag: "member"}}}
 	case *ast.IndexExpr:
 		return node{Tag: "index", Children: []node{normalizeNode(x.X), normalizeNode(x.Index)}}
 	case *ast.IndexListExpr:
-		return node{Tag: "index-list", Children: append([]node{normalizeNode(x.X)}, exprNodes(x.Indices)...)}
+		return node{Tag: "index-list", Children: append([]node{normalizeNode(x.X)}, normalizedNodes(x.Indices)...)}
 	case *ast.SliceExpr:
 		return node{Tag: "slice", Children: []node{normalizeNode(x.X), normalizeNode(x.Low), normalizeNode(x.High), normalizeNode(x.Max)}}
 	case *ast.StarExpr:
@@ -382,7 +382,7 @@ func normalizeNode(n ast.Node) node {
 	case *ast.ParenExpr:
 		return node{Tag: "paren", Children: []node{normalizeNode(x.X)}}
 	case *ast.CompositeLit:
-		return node{Tag: "composite", Children: append([]node{normalizeNode(x.Type)}, exprNodes(x.Elts)...)}
+		return node{Tag: "composite", Children: append([]node{normalizeNode(x.Type)}, normalizedNodes(x.Elts)...)}
 	case *ast.KeyValueExpr:
 		return node{Tag: "key-value", Children: []node{normalizeNode(x.Key), normalizeNode(x.Value)}}
 	case *ast.FuncLit:
@@ -431,7 +431,7 @@ func normalizeDecl(decl ast.Decl) node {
 func normalizeSpec(spec ast.Spec) node {
 	switch x := spec.(type) {
 	case *ast.ValueSpec:
-		return node{Tag: "value-spec", Children: append([]node{normalizeNode(x.Type)}, exprNodes(x.Values)...)}
+		return node{Tag: "value-spec", Children: append([]node{normalizeNode(x.Type)}, normalizedNodes(x.Values)...)}
 	case *ast.TypeSpec:
 		return node{Tag: "type-spec", Children: []node{normalizeNode(x.Type)}}
 	default:
@@ -450,18 +450,10 @@ func normalizeCallee(expr ast.Expr) node {
 	}
 }
 
-func stmtNodes(stmts []ast.Stmt) []node {
-	out := make([]node, 0, len(stmts))
-	for _, stmt := range stmts {
-		out = append(out, normalizeNode(stmt))
-	}
-	return out
-}
-
-func exprNodes(exprs []ast.Expr) []node {
-	out := make([]node, 0, len(exprs))
-	for _, expr := range exprs {
-		out = append(out, normalizeNode(expr))
+func normalizedNodes[T ast.Node](items []T) []node {
+	out := make([]node, 0, len(items))
+	for _, item := range items {
+		out = append(out, normalizeNode(item))
 	}
 	return out
 }
