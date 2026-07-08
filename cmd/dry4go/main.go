@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/unclebob/dry4go/internal/dry"
+	"github.com/mdw-tools/dry4go/internal/dry"
 )
 
 func main() {

@@ -1,3 +1,3 @@
-module github.com/unclebob/dry4go
+module github.com/mdw-tools/dry4go
 
 go 1.21
