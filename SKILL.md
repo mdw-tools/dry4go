@@ -36,7 +36,7 @@ dry4go --help
 If not installed:
 
 ```bash
-go install github.com/mdw-tools/dry4go/cmd/...
+go install github.com/mdw-tools/dry4go/cmd/dry4go@latest
 ```
 
 ## Step 2: Scan for candidates
