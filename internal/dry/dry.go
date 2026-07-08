@@ -15,12 +15,13 @@ import (
 )
 
 type Options struct {
-	Paths     []string
-	Threshold float64
-	MinLines  int
-	MinNodes  int
-	Format    string
-	Help      bool
+	Paths         []string
+	Threshold     float64
+	TwinThreshold float64
+	MinLines      int
+	MinNodes      int
+	Format        string
+	Help          bool
 }
 
 type Location struct {
@@ -44,10 +45,6 @@ const (
 	KindShapeTwin = "shape-twin"
 )
 
-// A pair this structurally similar is a shape twin even when divergent
-// literals drag its combined score below the reporting threshold.
-const shapeTwinStructuralBar = 0.95
-
 type entry struct {
 	file         string
 	startLine    int
@@ -63,22 +60,24 @@ type node struct {
 }
 
 var DefaultOptions = Options{
-	Paths:     []string{"."},
-	Threshold: 0.82,
-	MinLines:  4,
-	MinNodes:  20,
-	Format:    "text",
+	Paths:         []string{"."},
+	Threshold:     0.82,
+	TwinThreshold: 0.85,
+	MinLines:      4,
+	MinNodes:      20,
+	Format:        "text",
 }
 
 const Usage = `Usage: dry4go [options] [file-or-directory ...]
 
 Options:
-  --threshold N   Minimum combined score for a DUPLICATE, default 0.82
-  --min-lines N   Minimum source lines in a candidate function, default 4
-  --min-nodes N   Minimum normalized syntax nodes, default 20
-  --format F      text or json, default text
-  --json          Same as --format json
-  --text          Same as --format text`
+  --threshold N        Minimum combined score for a DUPLICATE, default 0.82
+  --twin-threshold N   Minimum structural score for a SHAPE-TWIN, default 0.85
+  --min-lines N        Minimum source lines in a candidate function, default 4
+  --min-nodes N        Minimum normalized syntax nodes, default 20
+  --format F           text or json, default text
+  --json               Same as --format json
+  --text               Same as --format text`
 
 func ParseArgs(args []string) (Options, error) {
 	options := DefaultOptions
@@ -89,7 +88,7 @@ func ParseArgs(args []string) (Options, error) {
 		case "--help", "-h":
 			options.Help = true
 			return options, nil
-		case "--threshold", "--min-lines", "--min-nodes", "--format":
+		case "--threshold", "--twin-threshold", "--min-lines", "--min-nodes", "--format":
 			if i+1 >= len(args) {
 				return options, fmt.Errorf("missing value for %s", arg)
 			}
@@ -118,6 +117,9 @@ func FindDuplicates(options Options) ([]Candidate, error) {
 	if len(options.Paths) == 0 {
 		options.Paths = DefaultOptions.Paths
 	}
+	if options.TwinThreshold <= 0 {
+		options.TwinThreshold = DefaultOptions.TwinThreshold
+	}
 	entries, err := scanPaths(options.Paths, options.MinLines, options.MinNodes)
 	if err != nil {
 		return nil, err
@@ -130,7 +132,7 @@ func FindDuplicates(options Options) ([]Candidate, error) {
 			switch {
 			case combined >= options.Threshold:
 				kind = KindDuplicate
-			case structural >= shapeTwinStructuralBar:
+			case structural >= options.TwinThreshold:
 				kind = KindShapeTwin
 			default:
 				continue
@@ -204,6 +206,12 @@ func applyValueOption(options *Options, arg, value string) error {
 			return err
 		}
 		options.Threshold = n
+	case "--twin-threshold":
+		n, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return err
+		}
+		options.TwinThreshold = n
 	case "--min-lines":
 		n, err := strconv.Atoi(value)
 		if err != nil {

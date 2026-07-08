@@ -30,10 +30,10 @@ Candidates are reported as one of two kinds:
 
 - `DUPLICATE` — combined score at or above `--threshold` (default 0.82);
   likely copy-paste or parallel implementations.
-- `SHAPE-TWIN` — structural score at least 0.95 but combined score below the
-  threshold: same skeleton, different data. Common with test scaffolding, and
-  often a candidate for a table-driven test or parameterization rather than
-  extraction.
+- `SHAPE-TWIN` — structural score at least `--twin-threshold` (default 0.85)
+  but combined score below the threshold: same skeleton, different data.
+  Common with test scaffolding, and often a candidate for a table-driven test
+  or parameterization rather than extraction.
 
 Go differs from Clojure in important ways, so dry4go treats functions and
 methods as the comparison units and uses Go's parser/AST instead of textual
@@ -83,12 +83,13 @@ dry4go [options] [file-or-directory ...]
 Options:
 
 ```text
---threshold N   Minimum combined score for a DUPLICATE, default 0.82
---min-lines N   Minimum source lines in a candidate function, default 4
---min-nodes N   Minimum normalized syntax nodes, default 20
---format F      text or json, default text
---json          Same as --format json
---text          Same as --format text
+--threshold N        Minimum combined score for a DUPLICATE, default 0.82
+--twin-threshold N   Minimum structural score for a SHAPE-TWIN, default 0.85
+--min-lines N        Minimum source lines in a candidate function, default 4
+--min-nodes N        Minimum normalized syntax nodes, default 20
+--format F           text or json, default text
+--json               Same as --format json
+--text               Same as --format text
 ```
 
 Examples:

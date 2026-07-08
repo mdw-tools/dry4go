@@ -170,6 +170,55 @@ func TwinRight() string {
 	}
 }
 
+func TestFindDuplicatesClassifiesRepeatedStatementShapeTwins(t *testing.T) {
+	dir := t.TempDir()
+	writeSource(t, dir, "left.go", `package sample
+
+func OneRental() string {
+	customer := &Customer{"Fred", nil}
+	customer.Add(&Rental{&Movie{"The Cell", New}, 3})
+	want := "a fairly long expected statement describing one rental outcome"
+	if customer.Statement() != want {
+		return want
+	}
+	return ""
+}
+`)
+	writeSource(t, dir, "right.go", `package sample
+
+func ThreeRentals() string {
+	customer := &Customer{"Barney", nil}
+	customer.Add(&Rental{&Movie{"Plan 9 from Outer Space", Regular}, 1})
+	customer.Add(&Rental{&Movie{"8 1/2", Regular}, 2})
+	customer.Add(&Rental{&Movie{"Eraserhead", Regular}, 3})
+	want := "a rather different expected statement describing three rental outcomes"
+	if customer.Statement() != want {
+		return want
+	}
+	return ""
+}
+`)
+	options := Options{Paths: []string{dir}, Threshold: 0.82, MinLines: 4, MinNodes: 8}
+	candidates, err := FindDuplicates(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].Kind != KindShapeTwin {
+		t.Fatalf("expected one shape twin at the default twin threshold, got %#v", candidates)
+	}
+	if candidates[0].StructuralScore < 0.85 || candidates[0].StructuralScore >= 0.95 {
+		t.Fatalf("fixture should land between the old and new bars, got %#v", candidates[0])
+	}
+	options.TwinThreshold = 0.95
+	candidates, err = FindDuplicates(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("expected no candidates at a raised twin threshold, got %#v", candidates)
+	}
+}
+
 func TestFiltersShortFunctions(t *testing.T) {
 	dir := t.TempDir()
 	writeSource(t, dir, "one.go", "package sample\nfunc A(x int) int { return x + 1 }\n")
@@ -323,12 +372,15 @@ func TestSimilarityWithoutLiteralsMatchesStructuralScore(t *testing.T) {
 }
 
 func TestParseArgs(t *testing.T) {
-	options, err := ParseArgs([]string{"--threshold", "0.9", "--min-lines", "5", "--min-nodes", "30", "--json", "pkg"})
+	options, err := ParseArgs([]string{"--threshold", "0.9", "--twin-threshold", "0.92", "--min-lines", "5", "--min-nodes", "30", "--json", "pkg"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if options.Threshold != 0.9 || options.MinLines != 5 || options.MinNodes != 30 || options.Format != "json" {
 		t.Fatalf("unexpected options: %#v", options)
+	}
+	if options.TwinThreshold != 0.92 {
+		t.Fatalf("unexpected twin threshold: %#v", options)
 	}
 	if len(options.Paths) != 1 || options.Paths[0] != "pkg" {
 		t.Fatalf("unexpected paths: %#v", options.Paths)
@@ -342,6 +394,9 @@ func TestParseArgsDefaultsToCurrentDirectory(t *testing.T) {
 	}
 	if len(options.Paths) != 1 || options.Paths[0] != "." {
 		t.Fatalf("unexpected default paths: %#v", options.Paths)
+	}
+	if options.TwinThreshold != 0.85 {
+		t.Fatalf("unexpected default twin threshold: %#v", options)
 	}
 }
 

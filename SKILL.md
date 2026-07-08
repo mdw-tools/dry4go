@@ -19,10 +19,10 @@ that discounts divergent literals, and is reported as one of two kinds:
 
 - `DUPLICATE` — combined score at or above the threshold; likely copy-paste
   or parallel implementations. `score=1.00` means identical apart from names.
-- `SHAPE-TWIN` — near-identical structure (structural score ≥ 0.95) whose
-  combined score fell below the threshold because the literal content
-  diverges: same skeleton, different data. This is the classic precondition
-  for a table-driven test or for parameterizing production code.
+- `SHAPE-TWIN` — near-identical structure (structural score ≥ 0.85 by
+  default) whose combined score fell below the threshold because the literal
+  content diverges: same skeleton, different data. This is the classic
+  precondition for a table-driven test or for parameterizing production code.
 
 It only finds duplication; you evaluate each candidate and perform the
 refactoring.
@@ -50,12 +50,13 @@ dry4go --json .
 
 Useful options:
 
-| Option          | Default | Purpose                                          |
-|-----------------|---------|--------------------------------------------------|
-| `--threshold N` | 0.82    | Minimum combined score to report a DUPLICATE     |
-| `--min-lines N` | 4       | Ignore functions shorter than N source lines     |
-| `--min-nodes N` | 20      | Ignore functions with fewer normalized AST nodes |
-| `--json`        | text    | Machine-readable output                          |
+| Option               | Default | Purpose                                          |
+|----------------------|---------|--------------------------------------------------|
+| `--threshold N`      | 0.82    | Minimum combined score to report a DUPLICATE     |
+| `--twin-threshold N` | 0.85    | Minimum structural score to report a SHAPE-TWIN  |
+| `--min-lines N`      | 4       | Ignore functions shorter than N source lines     |
+| `--min-nodes N`      | 20      | Ignore functions with fewer normalized AST nodes |
+| `--json`             | text    | Machine-readable output                          |
 
 Directories are searched recursively (`.git`, `vendor`, and `target` are
 skipped). Multiple file/directory arguments all participate in one search set,
@@ -63,10 +64,13 @@ so cross-package duplication is found too.
 
 Tuning guidance:
 
-- Start at the default threshold. If the report is empty, retry once at
+- Start at the default thresholds. If the report is empty, retry once at
   `--threshold 0.75` to surface near-duplicates worth reviewing.
 - If the report is overwhelming, raise to `--threshold 0.9` and handle the
   strongest matches first.
+- The default `--twin-threshold 0.85` admits near-twins that differ by a
+  repeated statement or a single added/removed line; raise it to `0.95` to
+  see only exact structural twins.
 
 JSON output shape:
 
@@ -90,8 +94,9 @@ JSON output shape:
 
 ## Step 3: Triage each candidate
 
-Sort candidates by score, highest first. For each pair, Read both line ranges
-(with a few lines of surrounding context) and decide:
+Candidates arrive sorted: duplicates first, then shape twins, strongest
+first within each kind. Work top to bottom. For each pair, Read both line
+ranges (with a few lines of surrounding context) and decide:
 
 **Consolidate** when the two functions express the same *intent* and would
 change together — same algorithm applied to different names, fields, or
@@ -100,8 +105,11 @@ merging.
 
 For `SHAPE-TWIN` candidates the fitting consolidation is usually different:
 in tests, a table-driven test over the divergent values; in production code,
-parameterizing the data that differs. Two instances rarely justify a table —
-weigh the count and the likelihood of more.
+parameterizing the data that differs. When several twin pairs involve the
+same functions, treat them as one cluster — a single table (or one
+parameterized function) usually resolves the whole group. Two isolated
+instances rarely justify a table — weigh the count and the likelihood of
+more.
 
 **Skip** when the duplication is incidental or protective:
 
