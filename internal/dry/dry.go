@@ -30,12 +30,23 @@ type Location struct {
 }
 
 type Candidate struct {
-	Score      float64  `json:"score"`
-	Left       Location `json:"left"`
-	Right      Location `json:"right"`
-	LeftNodes  int      `json:"left_nodes"`
-	RightNodes int      `json:"right_nodes"`
+	Kind            string   `json:"kind"`
+	Score           float64  `json:"score"`
+	StructuralScore float64  `json:"structural_score"`
+	Left            Location `json:"left"`
+	Right           Location `json:"right"`
+	LeftNodes       int      `json:"left_nodes"`
+	RightNodes      int      `json:"right_nodes"`
 }
+
+const (
+	KindDuplicate = "duplicate"
+	KindShapeTwin = "shape-twin"
+)
+
+// A pair this structurally similar is a shape twin even when divergent
+// literals drag its combined score below the reporting threshold.
+const shapeTwinStructuralBar = 0.95
 
 type entry struct {
 	file         string
@@ -43,6 +54,7 @@ type entry struct {
 	endLine      int
 	nodes        int
 	fingerprints map[string]bool
+	literals     map[string]float64
 }
 
 type node struct {
@@ -61,7 +73,7 @@ var DefaultOptions = Options{
 const Usage = `Usage: dry4go [options] [file-or-directory ...]
 
 Options:
-  --threshold N   Minimum structural similarity score, default 0.82
+  --threshold N   Minimum combined score for a DUPLICATE, default 0.82
   --min-lines N   Minimum source lines in a candidate function, default 4
   --min-nodes N   Minimum normalized syntax nodes, default 20
   --format F      text or json, default text
@@ -113,20 +125,32 @@ func FindDuplicates(options Options) ([]Candidate, error) {
 	var candidates []Candidate
 	for i := 0; i < len(entries); i++ {
 		for j := i + 1; j < len(entries); j++ {
-			score := similarity(entries[i], entries[j])
-			if score >= options.Threshold {
-				candidates = append(candidates, Candidate{
-					Score:      score,
-					Left:       location(entries[i]),
-					Right:      location(entries[j]),
-					LeftNodes:  entries[i].nodes,
-					RightNodes: entries[j].nodes,
-				})
+			structural, combined := similarity(entries[i], entries[j])
+			var kind string
+			switch {
+			case combined >= options.Threshold:
+				kind = KindDuplicate
+			case structural >= shapeTwinStructuralBar:
+				kind = KindShapeTwin
+			default:
+				continue
 			}
+			candidates = append(candidates, Candidate{
+				Kind:            kind,
+				Score:           combined,
+				StructuralScore: structural,
+				Left:            location(entries[i]),
+				Right:           location(entries[j]),
+				LeftNodes:       entries[i].nodes,
+				RightNodes:      entries[j].nodes,
+			})
 		}
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
+		if a.Kind != b.Kind {
+			return a.Kind == KindDuplicate
+		}
 		if a.Score != b.Score {
 			return a.Score > b.Score
 		}
@@ -150,8 +174,13 @@ func FormatText(candidates []Candidate) string {
 	}
 	var blocks []string
 	for _, candidate := range candidates {
-		blocks = append(blocks, fmt.Sprintf("DUPLICATE score=%.2f\n  %s\n  %s",
-			candidate.Score, lineRange(candidate.Left), lineRange(candidate.Right)))
+		heading := fmt.Sprintf("DUPLICATE score=%.2f", candidate.Score)
+		if candidate.Kind == KindShapeTwin {
+			heading = fmt.Sprintf("SHAPE-TWIN structural=%.2f score=%.2f (consider table/parameterization)",
+				candidate.StructuralScore, candidate.Score)
+		}
+		blocks = append(blocks, fmt.Sprintf("%s\n  %s\n  %s",
+			heading, lineRange(candidate.Left), lineRange(candidate.Right)))
 	}
 	return strings.Join(blocks, "\n\n") + "\n"
 }
@@ -286,6 +315,7 @@ func scanFile(path string, minLines, minNodes int) ([]entry, error) {
 			endLine:      end,
 			nodes:        nodes,
 			fingerprints: fingerprints(normalized),
+			literals:     literalFeatures(fn),
 		})
 	}
 	return entries, nil
@@ -470,6 +500,20 @@ func nodeCount(n node) int {
 	return total
 }
 
+const literalLengthCap = 56
+
+func literalFeatures(fn ast.Node) map[string]float64 {
+	result := map[string]float64{}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok {
+			key := "lit/" + lit.Kind.String() + "/" + lit.Value
+			result[key] = 1 + min(float64(len(lit.Value)), literalLengthCap)/8
+		}
+		return true
+	})
+	return result
+}
+
 func fingerprints(n node) map[string]bool {
 	out := map[string]bool{}
 	var walk func(node)
@@ -499,7 +543,7 @@ func writeNode(b *bytes.Buffer, n node) {
 	b.WriteString(")")
 }
 
-func similarity(left, right entry) float64 {
+func similarity(left, right entry) (structural, combined float64) {
 	intersection := 0
 	for fp := range left.fingerprints {
 		if right.fingerprints[fp] {
@@ -513,9 +557,25 @@ func similarity(left, right entry) float64 {
 		}
 	}
 	if union == 0 {
-		return 0
+		return 0, 0
 	}
-	return float64(intersection) / float64(union)
+	structural = float64(intersection) / float64(union)
+	shared, total := float64(intersection), float64(union)
+	for feature, leftWeight := range left.literals {
+		if rightWeight, ok := right.literals[feature]; ok {
+			shared += min(leftWeight, rightWeight)
+			total += max(leftWeight, rightWeight)
+		} else {
+			total += leftWeight
+		}
+	}
+	for feature, rightWeight := range right.literals {
+		if _, ok := left.literals[feature]; !ok {
+			total += rightWeight
+		}
+	}
+	combined = shared / total
+	return structural, combined
 }
 
 func location(e entry) Location {

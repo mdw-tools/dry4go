@@ -9,21 +9,37 @@ signature shape into normalized syntax nodes. The normalized tree is walked to
 collect a set of structural fingerprints, one for the whole function and one for
 each nested syntax node.
 
-Similarity is Jaccard similarity over those fingerprint sets:
+Each pair of functions gets two scores. The *structural* score is Jaccard
+similarity over those fingerprint sets:
 
 ```text
-score = shared fingerprints / all fingerprints seen in either function
+structural = shared fingerprints / all fingerprints seen in either function
 ```
 
-A score of `1.0` means the normalized structures have the same fingerprint set.
-Lower scores mean the functions still share structure, but each function also
-has structure the other does not. The default `--threshold 0.82` reports
-candidates whose normalized structures are close enough to be worth review.
+The *combined* score extends that with the functions' literal values as a
+second family of weighted features (each distinct literal weighted by its
+textual length, capped), so divergent literals lower the score in proportion
+to how literal-heavy the code is:
+
+```text
+score = shared feature weight / all feature weight seen in either function
+```
+
+A combined score of `1.0` means the functions are identical apart from names.
+Candidates are reported as one of two kinds:
+
+- `DUPLICATE` — combined score at or above `--threshold` (default 0.82);
+  likely copy-paste or parallel implementations.
+- `SHAPE-TWIN` — structural score at least 0.95 but combined score below the
+  threshold: same skeleton, different data. Common with test scaffolding, and
+  often a candidate for a table-driven test or parameterization rather than
+  extraction.
 
 Go differs from Clojure in important ways, so dry4go treats functions and
 methods as the comparison units and uses Go's parser/AST instead of textual
-forms. Identifiers, local names, selector names, and literal values normalize
-away. Structural Go syntax is preserved, including:
+forms. Identifiers, local names, and selector names normalize away entirely;
+literal values participate only in the combined score. Structural Go syntax
+is preserved, including:
 
 - function and method shape
 - parameter and result type structure
@@ -67,7 +83,7 @@ dry4go [options] [file-or-directory ...]
 Options:
 
 ```text
---threshold N   Minimum structural similarity score, default 0.82
+--threshold N   Minimum combined score for a DUPLICATE, default 0.82
 --min-lines N   Minimum source lines in a candidate function, default 4
 --min-nodes N   Minimum normalized syntax nodes, default 20
 --format F      text or json, default text
@@ -94,15 +110,21 @@ Default text output is intended for quick reading:
 DUPLICATE score=0.89
   internal/billing/invoice.go:12-25
   internal/billing/receipt.go:30-44
+
+SHAPE-TWIN structural=1.00 score=0.43 (consider table/parameterization)
+  internal/billing/invoice_test.go:64-101
+  internal/billing/receipt_test.go:103-114
 ```
 
-JSON output is intended for tools:
+Duplicates sort before shape twins. JSON output is intended for tools:
 
 ```json
 {
   "candidates": [
     {
+      "kind": "duplicate",
       "score": 0.8909090909090909,
+      "structural_score": 0.9285714285714286,
       "left": {"file": "internal/billing/invoice.go", "start_line": 12, "end_line": 25},
       "right": {"file": "internal/billing/receipt.go", "start_line": 30, "end_line": 44},
       "left_nodes": 88,

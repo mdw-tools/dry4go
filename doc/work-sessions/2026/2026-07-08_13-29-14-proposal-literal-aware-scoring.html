@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal: Literal-Aware Duplication Scoring</title>
+<style>
+  :root {
+    --ink: #1a2233;
+    --muted: #5a6478;
+    --accent: #0b5cad;
+    --accent-soft: #e8f1fa;
+    --rule: #d6dce6;
+    --card: #f7f9fc;
+    --good: #1a7f37;
+    --bad: #b42318;
+    --warn: #9a6700;
+    --code-bg: #f2f4f8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: #ffffff;
+    font: 16px/1.6 "Charter", "Georgia", serif;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+  h1, h2, h3 { font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif; line-height: 1.25; }
+  h1 { font-size: 1.9rem; margin: 0 0 .25rem; }
+  h2 {
+    font-size: 1.3rem; margin: 2.5rem 0 .75rem; padding-bottom: .35rem;
+    border-bottom: 2px solid var(--rule);
+  }
+  h3 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; color: var(--accent); }
+  .meta {
+    font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+    font-size: .85rem; color: var(--muted); margin-bottom: 2rem;
+  }
+  .meta span { margin-right: 1.25rem; }
+  .badge {
+    display: inline-block; padding: .1rem .5rem; border-radius: 999px;
+    background: var(--warn); color: #fff; font-weight: 600; font-size: .75rem;
+    letter-spacing: .05em; text-transform: uppercase;
+  }
+  code, pre {
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: .84em;
+  }
+  code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px;
+    padding: .9rem 1.1rem; overflow-x: auto; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  table {
+    border-collapse: collapse; width: 100%; margin: 1rem 0;
+    font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif; font-size: .88rem;
+  }
+  th, td { border: 1px solid var(--rule); padding: .45rem .7rem; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); font-weight: 600; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .good { color: var(--good); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+  .callout {
+    background: var(--accent-soft); border-left: 4px solid var(--accent);
+    border-radius: 0 8px 8px 0; padding: .8rem 1.1rem; margin: 1.25rem 0;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 1rem 1.25rem; margin: 1rem 0;
+  }
+  .cols { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .cols > div { flex: 1 1 320px; }
+  figure { margin: 1.5rem 0; text-align: center; }
+  figcaption { font-size: .82rem; color: var(--muted); margin-top: .4rem; font-family: "Avenir Next", Arial, sans-serif; }
+  ul.checklist { list-style: none; padding-left: .25rem; }
+  ul.checklist li { margin: .45rem 0; padding-left: 1.9rem; position: relative; }
+  ul.checklist li::before {
+    content: ""; position: absolute; left: 0; top: .28em;
+    width: 1em; height: 1em; border: 2px solid var(--accent);
+    border-radius: 4px; background: #fff;
+  }
+  ul.checklist li.done::before { background: var(--good); border-color: var(--good); }
+  ul.checklist li.done::after {
+    content: "✓"; position: absolute; left: .3em; top: .3em;
+    color: #fff; font-size: .78em; font-weight: 700; line-height: 1;
+    font-family: "Avenir Next", Arial, sans-serif;
+  }
+  .phase-label {
+    display: inline-block; font-family: "Avenir Next", Arial, sans-serif;
+    font-size: .72rem; font-weight: 700; letter-spacing: .06em;
+    padding: .1rem .45rem; border-radius: 4px; margin-right: .4rem; vertical-align: 1px;
+  }
+  .red   { background: #fde8e6; color: var(--bad); }
+  .green { background: #e2f3e6; color: var(--good); }
+  .blue  { background: var(--accent-soft); color: var(--accent); }
+  .strike-note { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Literal-Aware Duplication Scoring</h1>
+<div class="meta">
+  <span class="badge">Draft — awaiting review</span>
+  <span>2026-07-08</span>
+  <span><code>mdw-tools/dry4go</code></span>
+  <span>Proposal (Picard phase 2)</span>
+</div>
+
+<h2 id="background">1 · Background</h2>
+
+<p>Running <code>dry4go</code> on its own repository reports this pair at a perfect score:</p>
+
+<pre><code>DUPLICATE score=1.00
+  internal/dry/dry_test.go:64-101   TestFindDuplicatesMatchesMethodsAndCompositeLiterals
+  internal/dry/dry_test.go:103-114  TestFiltersShortFunctions</code></pre>
+
+<p>These two tests are <em>semantically opposite</em> — one asserts that a duplicate <strong>is</strong>
+found, the other that one <strong>is not</strong> — yet they score 1.00 because the current
+normalizer erases every identifier <em>and every literal value</em>. What remains of each test is
+the identical skeleton: <em>write two files, call <code>FindDuplicates</code>, check the error,
+check the candidate count</em>. All of the meaning lives in literals (the Go source strings under
+test, the thresholds, the expected counts), and all of it is discarded before scoring.</p>
+
+<div class="callout">
+<strong>Goal.</strong> Make the score reflect literal content <em>proportionally</em>: a pair that is
+identical except for one small constant should still score ≈1.0 (that is real, parameterizable
+duplication), while a pair whose shared structure is mere scaffolding around large, divergent
+literals — the common shape of test functions — should fall below the reporting threshold.
+</div>
+
+<h2 id="today">2 · How scoring works today</h2>
+
+<figure>
+<svg viewBox="0 0 840 130" width="100%" style="max-width:840px" role="img" aria-label="Current scoring pipeline">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6478"/>
+    </marker>
+  </defs>
+  <g font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="13">
+    <rect x="10"  y="35" width="130" height="52" rx="8" fill="#e8f1fa" stroke="#0b5cad"/>
+    <text x="75"  y="57" text-anchor="middle" fill="#1a2233">parse each</text>
+    <text x="75"  y="74" text-anchor="middle" fill="#1a2233">func decl</text>
+
+    <rect x="185" y="35" width="150" height="52" rx="8" fill="#e8f1fa" stroke="#0b5cad"/>
+    <text x="260" y="57" text-anchor="middle" fill="#1a2233">normalize AST</text>
+    <text x="260" y="74" text-anchor="middle" fill="#b42318">idents &amp; literal values erased</text>
+
+    <rect x="380" y="35" width="160" height="52" rx="8" fill="#e8f1fa" stroke="#0b5cad"/>
+    <text x="460" y="57" text-anchor="middle" fill="#1a2233">fingerprint every</text>
+    <text x="460" y="74" text-anchor="middle" fill="#1a2233">subtree (a set)</text>
+
+    <rect x="585" y="35" width="150" height="52" rx="8" fill="#e8f1fa" stroke="#0b5cad"/>
+    <text x="660" y="57" text-anchor="middle" fill="#1a2233">Jaccard over the</text>
+    <text x="660" y="74" text-anchor="middle" fill="#1a2233">two sets → score</text>
+
+    <line x1="140" y1="61" x2="180" y2="61" stroke="#5a6478" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="335" y1="61" x2="375" y2="61" stroke="#5a6478" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="540" y1="61" x2="580" y2="61" stroke="#5a6478" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="735" y1="61" x2="775" y2="61" stroke="#5a6478" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="800" y="66" fill="#1a2233" font-weight="600">0–1</text>
+  </g>
+</svg>
+<figcaption>Pipeline in <code>internal/dry/dry.go</code>: <code>scanFile → normalizeFunc → fingerprints → similarity</code>.</figcaption>
+</figure>
+
+<p>The two erasure rules that matter here (<code>dry.go:392-398</code>):</p>
+
+<pre><code>case *ast.Ident:      // every identifier becomes the same token
+    return node{Tag: "ident"}
+case *ast.BasicLit:   // "left.go", 0.75, and 42 all become literal/&lt;kind&gt;
+    return node{Tag: "literal/" + x.Kind.String()}</code></pre>
+
+<p>Erasing identifiers is correct and should not change — renamed variables are the classic
+disguise of real duplication. Erasing literal <em>kinds-only</em> is the problem: it treats
+<code>"package sample\nfunc A…"</code> and <code>"package sample\ntype Invoice…"</code> as
+interchangeable.</p>
+
+<h2 id="approach">3 · Proposed approach — weighted Jaccard with literal features</h2>
+
+<p>Keep the structural fingerprint set exactly as it is, and add a <strong>second family of
+features</strong>: one feature per distinct literal value in the function, carrying a weight that
+grows with the literal's textual length. Similarity becomes a single <em>weighted Jaccard</em>
+over the union of both families:</p>
+
+<div class="card">
+<p style="margin:.25rem 0"><strong>Features per function</strong></p>
+<ul>
+  <li>Structural: every serialized subtree, weight <code>1</code> each (unchanged from today).</li>
+  <li>Literal: <code>lit/&lt;kind&gt;/&lt;value&gt;</code> for each distinct <code>*ast.BasicLit</code>,
+      weight <code>1 + min(len(value), 56) / 8</code> — i.e. in the range <code>[1, 8]</code>.</li>
+</ul>
+<p style="margin:.5rem 0 .25rem"><strong>Score</strong></p>
+<p style="margin:.25rem 0">
+<code>score = Σ min(w<sub>L</sub>(f), w<sub>R</sub>(f)) / Σ max(w<sub>L</sub>(f), w<sub>R</sub>(f))</code>
+&nbsp;over all features <code>f</code> present on either side.
+</p>
+</div>
+
+<p>Why this shape rather than the alternatives (§5):</p>
+
+<ul>
+  <li><strong>Self-scaling.</strong> No global blend knob to tune. Literal influence is proportional
+      to how much of the function <em>is</em> literals. A 100-node function that differs in one
+      small int barely moves (≈0.98); a test whose body is two 30-line string literals is dominated
+      by them, exactly as a human reader would judge it.</li>
+  <li><strong>Non-brittle.</strong> Because literal values stay <em>out</em> of the structural tree,
+      changing one constant does not invalidate every ancestor subtree fingerprint. Each divergent
+      literal costs only its own weight.</li>
+  <li><strong>Length-weighted, capped.</strong> A multi-line Go-source string is stronger evidence of
+      dissimilarity than a differing <code>0</code> vs <code>1</code>, but the cap (weight 8) keeps a
+      single enormous string from single-handedly vetoing an otherwise-identical pair.</li>
+  <li><strong>Perfect duplicates still score 1.00.</strong> Identical code shares all features of
+      both families.</li>
+</ul>
+
+<h3>Edge rules</h3>
+<ul>
+  <li>Functions with no literals on either side: literal family contributes nothing; score reduces
+      to today's structural Jaccard. No special case needed — it falls out of the formula.</li>
+  <li><code>true</code>/<code>false</code>/<code>nil</code> already carry their value in the
+      structural tag (<code>literal/true</code> …); they get no literal feature.</li>
+  <li>Set semantics (distinct values), matching the existing structural fingerprint set. Repetition
+      counts are ignored; see trade-offs.</li>
+</ul>
+
+<h3>Projected outcomes <span style="font-weight:400;color:var(--muted)">(estimates, to be confirmed by tests)</span></h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Pair                                            </th>
+      <th class="num">Score today</th>
+      <th class="num">Projected  </th>
+      <th>Reported at 0.82?       </th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Byte-identical functions                        </td>
+      <td class="num">1.00</td>
+      <td class="num">1.00</td>
+      <td class="good">yes — unchanged</td>
+    </tr>
+    <tr>
+      <td>Real dup, renamed identifiers, same literals    </td>
+      <td class="num">1.00</td>
+      <td class="num">1.00</td>
+      <td class="good">yes — unchanged</td>
+    </tr>
+    <tr>
+      <td>Real dup differing in one small constant        </td>
+      <td class="num">1.00</td>
+      <td class="num">≈0.97</td>
+      <td class="good">yes</td>
+    </tr>
+    <tr>
+      <td>The offending test pair (scaffolding + big divergent strings)</td>
+      <td class="num">1.00</td>
+      <td class="num">≈0.55–0.65</td>
+      <td class="good">recategorized as SHAPE-TWIN (§4)</td>
+    </tr>
+    <tr>
+      <td>Dup differing only in a few error-message strings</td>
+      <td class="num">1.00</td>
+      <td class="num">≈0.85–0.92</td>
+      <td class="good">yes (dips with string mass)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Implementation shape</h3>
+
+<ul>
+  <li><code>entry</code> gains <code>literals map[string]float64</code> (feature → weight),
+      collected in <code>scanFile</code> by a small <code>ast.Inspect</code> walk over each
+      function — the normalizer itself is untouched.</li>
+  <li><code>similarity</code> produces <em>two</em> numbers per pair: the structural Jaccard
+      (today's score, unchanged) and the combined weighted Jaccard described above.</li>
+  <li><code>Candidate</code> gains <code>Kind</code> (<code>duplicate</code> |
+      <code>shape-twin</code>) and <code>StructuralScore</code>
+      (JSON: <code>kind</code>, <code>structural_score</code>); classification happens in
+      <code>FindDuplicates</code> and rendering in both formatters (§4).</li>
+  <li>No new CLI options; no change to <code>Options</code> or defaults.</li>
+</ul>
+
+<h2 id="tests">4 · Shape twins — preserving the table-driven-test signal</h2>
+
+<p>The literal-aware score resolves the motivating pair <em>without any test-file special-casing</em>:
+scaffolding-shaped tests differ almost entirely in literals, so their combined score falls below
+threshold naturally, while genuinely copy-pasted test logic (same fixtures, same assertions) still
+surfaces as a duplicate.</p>
+
+<p>But "same skeleton, different data" is itself a useful finding — it is the classic precondition
+for a table-driven test, or for parameterizing production code. Silently dropping those pairs would
+trade one blind spot for another. Since both scores are already computed, the tool keeps such pairs
+visible under a distinct label instead:</p>
+
+<pre><code>DUPLICATE score=0.97
+  internal/dry/dry.go:453-459
+  internal/dry/dry.go:461-467
+
+SHAPE-TWIN structural=1.00 score=0.61 (consider table/parameterization)
+  internal/dry/dry_test.go:64-101
+  internal/dry/dry_test.go:103-114</code></pre>
+
+<div class="callout">
+<strong>Classification rule.</strong> A pair is a <code>DUPLICATE</code> when its combined score
+≥ threshold. Otherwise it is a <code>SHAPE-TWIN</code> when its structural score ≥ 0.95 (internal
+constant) — near-identical shape whose divergence is essentially all literal. Anything else is not
+reported. Duplicates sort before shape twins in the output; JSON candidates carry
+<code>kind</code> and <code>structural_score</code> so downstream tooling can filter either way.
+</div>
+
+<p>This reframes the original complaint precisely: the offense was never that the test pair got
+<em>mentioned</em> — it was the claim of a perfect 1.00 duplicate. As a shape twin it is honestly
+described, and the reader can judge (as we did) whether two tests justify a table. A
+<code>--skip-tests</code> flag was considered for teams that never want test findings, and dropped
+in review as too blunt.</p>
+
+<h2 id="alternatives">5 · Alternatives considered</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Alternative                         </th>
+      <th>Why not                                                        </th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Put literal values into the structural tag (<code>literal/STRING/"left.go"</code>)</td>
+      <td>Brittle in the opposite direction: one changed constant alters every ancestor subtree
+          fingerprint, so a real dup differing in a single number would crater to a very low score.
+          Loses the "parameterizable duplication" signal entirely.</td>
+    </tr>
+    <tr>
+      <td>Two separate scores blended by a constant (<code>0.8·structural + 0.2·literal</code>)</td>
+      <td>Adds a tuning knob with no principled setting, and the literal channel gets the same
+          influence whether the function is 5% or 95% literals. Weighted Jaccard achieves the blend
+          with the proportionality built in.</td>
+    </tr>
+    <tr>
+      <td>Skip <code>_test.go</code> files (flag or default)</td>
+      <td>Blunt: copy-pasted test logic is real duplication worth finding, and the underlying
+          scoring flaw would still affect literal-heavy production code (SQL, templates, table-driven
+          data). Considered as an opt-in flag in an earlier draft; dropped in review.</td>
+    </tr>
+    <tr>
+      <td>Penalty multiplier when literal sets diverge</td>
+      <td>Equivalent in spirit but needs both a penalty curve and a mass estimate as separate
+          tunables; weighted Jaccard subsumes both.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="tradeoffs">6 · Trade-offs &amp; open questions</h2>
+
+<ul>
+  <li><strong>Two magic constants remain</strong> (length cap 56, divisor 8). They are local to the
+      weight function and validated by the projected-outcomes tests, but they are judgment calls.
+      If tests show borderline behavior, tune here first.</li>
+  <li><strong>Textual, not semantic, equality.</strong> <code>0x10</code> vs <code>16</code>, or
+      <code>"a" + "b"</code> vs <code>"ab"</code>, count as divergent literals. Acceptable: textual
+      divergence in a true dup is rare and costs little weight.</li>
+  <li><strong>Set semantics ignore repetition.</strong> A literal used once vs ten times is one
+      feature. Consistent with the existing structural fingerprint set; multiset weighting is a
+      possible future refinement if it proves to matter.</li>
+  <li><strong>Scores generally drop, never rise.</strong> Any pair sharing all structure and all
+      literals is unaffected; every other pair scores the same or lower. Users with pinned custom
+      thresholds may see fewer findings — this is the intended direction, but worth a release note.</li>
+  <li><strong>Existing test expectations may shift.</strong> The current test corpus asserts
+      candidate counts at specific thresholds; each assertion must be re-verified (and is called out
+      in the checklist).</li>
+</ul>
+
+<h2 id="checklist">7 · Implementation checklist</h2>
+
+<h3>Phase 1 — Literal feature extraction</h3>
+<ul class="checklist">
+  <li class="done"><span class="phase-label red">RED</span>Add internal test: <code>literalFeatures(fn)</code>
+      over a small parsed function returns the expected feature→weight map — distinct string,
+      int, and float literals; long string capped at weight 8; <code>true/false/nil</code>
+      excluded; duplicate values collapse to one feature.</li>
+  <li class="done"><span class="phase-label red">RED</span>Run <code>make test</code>; confirm failure is a
+      compile error on the missing <code>literalFeatures</code> (the right reason).</li>
+  <li class="done"><span class="phase-label green">GREEN</span>Implement <code>literalFeatures</code> via
+      <code>ast.Inspect</code> collecting <code>*ast.BasicLit</code> as
+      <code>lit/&lt;kind&gt;/&lt;value&gt;</code> with weight <code>1 + min(len, 56)/8</code>.</li>
+  <li class="done"><span class="phase-label green">GREEN</span>Run <code>make test</code>; confirm pass.</li>
+</ul>
+
+<h3>Phase 2 — Weighted similarity</h3>
+<ul class="checklist">
+  <li class="done"><span class="phase-label red">RED</span>Add internal tests for <code>similarity</code>:
+      (a) entries with identical structure and identical literals → 1.0;
+      (b) identical structure, fully divergent heavy literals → well below 0.82;
+      (c) identical structure, one divergent small literal → ≥0.95;
+      (d) no literals on either side → equals today's structural score.</li>
+  <li class="done"><span class="phase-label red">RED</span>Run <code>make test</code>; confirm the new
+      assertions fail because <code>similarity</code> ignores literals (the right reason —
+      manifested as compile errors on the missing <code>entry.literals</code> field and the
+      two-value <code>similarity</code> signature).</li>
+  <li class="done"><span class="phase-label green">GREEN</span>Add <code>literals</code> to <code>entry</code>,
+      populate it in <code>scanFile</code>, and rewrite <code>similarity</code> as the weighted
+      Jaccard over both feature families.</li>
+  <li class="done"><span class="phase-label green">GREEN</span>Run <code>make test</code>; confirm pass.</li>
+</ul>
+
+<h3>Phase 3 — Shape-twin classification &amp; reporting</h3>
+<ul class="checklist">
+  <li class="done"><span class="phase-label red">RED</span>Add <code>FindDuplicates</code>-level test capturing
+      the motivating bug class: two scaffolding-shaped functions (identical structure, large
+      divergent string literals, divergent expected-count literals) yield exactly one candidate
+      with <code>Kind: shape-twin</code>, <code>StructuralScore ≥ 0.95</code>, and combined
+      <code>Score</code> below the default threshold — while a true duplicate pair still yields
+      <code>Kind: duplicate</code>. Confirm failure is a compile error on the missing fields (the
+      right reason).</li>
+  <li class="done"><span class="phase-label green">GREEN</span>Add <code>Kind</code> and
+      <code>StructuralScore</code> to <code>Candidate</code>; classify in
+      <code>FindDuplicates</code> (combined ≥ threshold → duplicate; else structural ≥ 0.95 →
+      shape twin); sort duplicates before shape twins. Run <code>make test</code>; confirm pass.</li>
+  <li class="done"><span class="phase-label red">RED</span>Formatter tests: <code>FormatText</code> renders
+      <code>SHAPE-TWIN structural=… score=… (consider table/parameterization)</code> for twin
+      candidates and the unchanged <code>DUPLICATE</code> block for duplicates;
+      <code>FormatJSON</code> includes <code>kind</code> and <code>structural_score</code>.
+      Confirm each fails for the right reason.
+      <span class="strike-note">Deviation: the JSON assertion passed immediately — the
+      <code>kind</code>/<code>structural_score</code> tags rode along with the struct fields in the
+      prior GREEN step. Only the text formatter went red.</span></li>
+  <li class="done"><span class="phase-label green">GREEN</span>Update both formatters. Run
+      <code>make test</code>; confirm pass.</li>
+</ul>
+
+<h3>Phase 4 — End-to-end regression &amp; dogfood</h3>
+<ul class="checklist">
+  <li class="done"><span class="phase-label blue">VERIFY</span>Re-examine every existing test's threshold and
+      expected-count assertions against the new scores; adjust only where the new behavior is the
+      intended improvement, and note each adjustment in the commit message.
+      <span class="strike-note">Result: no adjustments needed — divergent literals in the existing
+      fixtures are a tiny fraction of shared mass, and zero-<code>Kind</code> candidates still
+      format as <code>DUPLICATE</code>.</span></li>
+  <li class="done"><span class="phase-label blue">VERIFY</span>Run <code>make test</code> (full suite, race,
+      coverage) — all green.</li>
+  <li class="done"><span class="phase-label blue">VERIFY</span>Dogfood: run <code>dry4go</code> on this repo;
+      confirm the <code>dry_test.go:64-101 / 103-114</code> pair now appears as
+      <code>SHAPE-TWIN</code> (not a 1.00 <code>DUPLICATE</code>), no <code>DUPLICATE</code>
+      findings remain, and no surprising new pairs appear.
+      <span class="strike-note">Observed: <code>SHAPE-TWIN structural=1.00 score=0.43</code> for
+      that pair (at its new line numbers, 68-105 / 173-184); nothing else reported.</span></li>
+  <li class="done"><span class="phase-label blue">VERIFY</span>Update the repo's <code>SKILL.md</code> if it
+      describes the output format.
+      <span class="strike-note">Updated: normalization description, threshold option purpose,
+      JSON example (<code>kind</code>, <code>structural_score</code>), and triage guidance for
+      shape twins.</span></li>
+</ul>
+
+<h2 id="done">8 · Definition of done</h2>
+<ul>
+  <li>All four phases complete, <code>make test</code> green.</li>
+  <li>Dogfood run reports zero <code>DUPLICATE</code> findings at default settings; the known test
+      pair appears only as a <code>SHAPE-TWIN</code>.</li>
+  <li>Byte-identical and identifier-renamed duplicates still score 1.00.</li>
+</ul>
+
+</main>
+</body>
+</html>

@@ -12,11 +12,20 @@ allowed-tools: Bash(dry4go:*), Bash(go:*), Bash(make:*), Read, Grep, Glob, Edit,
 # Eliminate Duplicate Go Code with dry4go
 
 dry4go compares every Go function and method in the given files/directories by
-normalizing each one to structural fingerprints (identifiers, local names, and
-literal values are erased; control flow, shape, and operators are kept). It
-reports *candidate* pairs with a similarity score — `1.0` means structurally
-identical after normalization. It only finds duplication; you evaluate each
-candidate and perform the refactoring.
+normalizing each one to structural fingerprints (identifiers and local names
+are erased; control flow, shape, and operators are kept) plus a weighted set
+of literal values. Each pair gets a *structural* score and a *combined* score
+that discounts divergent literals, and is reported as one of two kinds:
+
+- `DUPLICATE` — combined score at or above the threshold; likely copy-paste
+  or parallel implementations. `score=1.00` means identical apart from names.
+- `SHAPE-TWIN` — near-identical structure (structural score ≥ 0.95) whose
+  combined score fell below the threshold because the literal content
+  diverges: same skeleton, different data. This is the classic precondition
+  for a table-driven test or for parameterizing production code.
+
+It only finds duplication; you evaluate each candidate and perform the
+refactoring.
 
 ## Step 1: Ensure dry4go is available
 
@@ -43,7 +52,7 @@ Useful options:
 
 | Option          | Default | Purpose                                          |
 |-----------------|---------|--------------------------------------------------|
-| `--threshold N` | 0.82    | Minimum similarity score to report               |
+| `--threshold N` | 0.82    | Minimum combined score to report a DUPLICATE     |
 | `--min-lines N` | 4       | Ignore functions shorter than N source lines     |
 | `--min-nodes N` | 20      | Ignore functions with fewer normalized AST nodes |
 | `--json`        | text    | Machine-readable output                          |
@@ -65,7 +74,9 @@ JSON output shape:
 {
   "candidates": [
     {
+      "kind": "duplicate",
       "score": 0.89,
+      "structural_score": 0.93,
       "left":  {"file": "internal/billing/invoice.go", "start_line": 12, "end_line": 25},
       "right": {"file": "internal/billing/receipt.go", "start_line": 30, "end_line": 44},
       "left_nodes": 88,
@@ -74,6 +85,8 @@ JSON output shape:
   ]
 }
 ```
+
+`kind` is `"duplicate"` or `"shape-twin"`; duplicates sort before shape twins.
 
 ## Step 3: Triage each candidate
 
@@ -84,6 +97,11 @@ Sort candidates by score, highest first. For each pair, Read both line ranges
 change together — same algorithm applied to different names, fields, or
 constants. A score at or near 1.0 with matching intent is almost always worth
 merging.
+
+For `SHAPE-TWIN` candidates the fitting consolidation is usually different:
+in tests, a table-driven test over the divergent values; in production code,
+parameterizing the data that differs. Two instances rarely justify a table —
+weigh the count and the likelihood of more.
 
 **Skip** when the duplication is incidental or protective:
 
